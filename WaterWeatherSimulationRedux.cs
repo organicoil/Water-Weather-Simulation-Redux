@@ -101,8 +101,6 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private void EventOnBeginChunkColumnLoadChunkThread(IServerMapChunk mapChunk, int chunkX, int chunkZ, IWorldChunk[] chunks)
     {
-        int debugCount = 0;
-
         bulkBlockAccessor.SetChunks(new Vec2i(chunkX, chunkZ), chunks);
 
         BlockPos blockPos = new BlockPos(0, 0, 0, 0);
@@ -122,17 +120,6 @@ public class WaterWeatherSimulationRedux : ModSystem
                 {
                     continue;
                 }
-
-                if (debugCount == 1000)
-                {
-                    LOG.Debug($"[WWSR] Calculating daily average at: {blockPos}");
-                    for (int i = 0; i < 144; i++)
-                    {
-                        LOG.Debug($"[WWSR] Daily average ({i}): {GetDailyAverageTemperature(blockPos, i)}");
-                    }
-                    debugCount = 0;
-                }
-                debugCount++;
 
                 float temperature = getTemperature(blockPos);
                 if (temperature < config.FreezingTemperature)
