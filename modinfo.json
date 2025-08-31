@@ -1,13 +1,14 @@
 {
-    "type": "code",
-    "modid": "WaterWeatherSimulationRedux",
-    "name": "Water Weather Simulation Redux",
-    "authors": [
-        "organicoil"
-    ],
-    "description": "",
-    "version": "0.1.4",
-    "dependencies": {
-        "game": ""
-    }
+  "type": "code",
+  "side": "Server",
+  "modid": "WaterWeatherSimulationRedux",
+  "name": "Water Weather Simulation Redux",
+  "authors": [
+    "organicoil"
+  ],
+  "description": "Melts ice and freezes water during chunk load. Now with configurable options!",
+  "version": "1.0.0",
+  "dependencies": {
+    "game": "*"
+  }
 }
