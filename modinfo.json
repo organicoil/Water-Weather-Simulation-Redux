@@ -1,0 +1,13 @@
+{
+    "type": "code",
+    "modid": "WaterWeatherSimulationRedux",
+    "name": "Water Weather Simulation Redux",
+    "authors": [
+        "organicoil"
+    ],
+    "description": "",
+    "version": "0.1.0",
+    "dependencies": {
+        "game": ""
+    }
+}
