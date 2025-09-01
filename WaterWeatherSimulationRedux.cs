@@ -27,6 +27,9 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private const string CONFIG_FILE_NAME = "water_weather_simulation_redux.json";
 
+    private const string ICE_BLOCK_PATH = "lakeice";
+    private const string WATER_BLOCK_PATH = "water-still-7";
+
     private ILogger LOG;
 
     private IWorldAccessor world;
@@ -43,33 +46,39 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     public override void StartServerSide(ICoreServerAPI api)
     {
-        LOG = api.Logger;
+        try
+        {
+            api.Logger.Debug("[WWSR] Starting initialization...");
 
-        LOG.Debug("[WWSR] Starting initialization...");
+            LOG = api.Logger;
+            world = api.World;
+            bulkBlockAccessor = api.World.GetBlockAccessorMapChunkLoading(false);
 
-        world = api.World;
-        bulkBlockAccessor = api.World.GetBlockAccessorMapChunkLoading(false);
+            InitBlocks(api);
+            LoadConfig(api);
 
-        InitBlocks(api);
+            api.Event.BeginChunkColumnLoadChunkThread += EventOnBeginChunkColumnLoadChunkThread;
 
-        LoadConfig(api);
-
-        api.Event.BeginChunkColumnLoadChunkThread += EventOnBeginChunkColumnLoadChunkThread;
-
-        LOG.Debug("[WWSR] Initialization complete");
+            api.Logger.Debug("[WWSR] Initialization complete");
+        }
+        catch (Exception e)
+        {
+            api.Logger.Error("[WWSR] Failed to initialize");
+            api.Logger.Error(e);
+        }
     }
 
     private void InitBlocks(ICoreServerAPI api)
     {
-        Block iceBlock = api.World.GetBlock(AssetLocation.Create("lakeice"));
-        Block waterBlock = api.World.GetBlock(AssetLocation.Create("water-still-7"));
+        Block iceBlock = api.World.GetBlock(AssetLocation.Create(ICE_BLOCK_PATH));
+        Block waterBlock = api.World.GetBlock(AssetLocation.Create(WATER_BLOCK_PATH));
         if (iceBlock == null)
         {
-            throw new Exception("[WWSR] Ice block not found by id ('lakeice')");
+            throw new Exception($"[WWSR] Ice block not found ('{ICE_BLOCK_PATH}')");
         }
         if (waterBlock == null)
         {
-            throw new Exception("[WWSR] Water block not found by id ('water-still-7')");
+            throw new Exception($"[WWSR] Water block not found ('{WATER_BLOCK_PATH}')");
         }
         iceBlockId = iceBlock.BlockId;
         waterBlockId = waterBlock.BlockId;
@@ -101,39 +110,69 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private void EventOnBeginChunkColumnLoadChunkThread(IServerMapChunk mapChunk, int chunkX, int chunkZ, IWorldChunk[] chunks)
     {
-        bulkBlockAccessor.SetChunks(new Vec2i(chunkX, chunkZ), chunks);
+        try
+        {
+            bulkBlockAccessor.SetChunks(new Vec2i(chunkX, chunkZ), chunks);
 
+            ProcessChunkBlocks(chunkX, chunkZ);
+
+            bulkBlockAccessor.Commit();
+        }
+        catch (Exception e)
+        {
+            LOG.Error($"[WWSR] Failed to process chunk (chunkX: {chunkX}, chunkZ: {chunkZ})");
+            LOG.Error(e);
+        }
+    }
+
+    private void ProcessChunkBlocks(int chunkX, int chunkZ)
+    {
         BlockPos blockPos = new BlockPos(0, 0, 0, 0);
         for (int x = chunkX * 32; x < chunkX * 32 + 32; x++)
         {
             for (int z = chunkZ * 32; z < chunkZ * 32 + 32; z++)
             {
-                blockPos.X = x;
-                blockPos.Z = z;
-
-                // Rain map height may return value out of world.
-                int y = bulkBlockAccessor.GetRainMapHeightAt(blockPos);
-                blockPos.Y = y < bulkBlockAccessor.MapSizeY ? y : world.SeaLevel - 1;
-
-                Block block = bulkBlockAccessor.GetBlock(blockPos, BlockLayersAccess.Fluid);
-                if (block.BlockId != waterBlockId && block.BlockId != iceBlockId)
+                try
                 {
-                    continue;
+                    UpdateBlockPos(blockPos, x, z);
+                    ProcessBlock(blockPos);
                 }
-
-                float temperature = getTemperature(blockPos);
-                if (temperature < config.FreezingTemperature)
+                catch (Exception e)
                 {
-                    bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
-                }
-                else if (temperature > config.MeltingTemperature)
-                {
-                    bulkBlockAccessor.SetBlock(waterBlockId, blockPos, BlockLayersAccess.Fluid);
+                    LOG.Error($"[WWSR] Failed to process block (x: {x}, z: {z})");
+                    LOG.Error(e);
                 }
             }
         }
+    }
 
-        bulkBlockAccessor.Commit();
+    private void UpdateBlockPos(BlockPos blockPos, int x, int z)
+    {
+        blockPos.X = x;
+        blockPos.Z = z;
+
+        // Rain map height may return value out of world.
+        int y = bulkBlockAccessor.GetRainMapHeightAt(blockPos);
+        blockPos.Y = y < bulkBlockAccessor.MapSizeY ? y : world.SeaLevel - 1;
+    }
+
+    private void ProcessBlock(BlockPos blockPos)
+    {
+        Block block = bulkBlockAccessor.GetBlock(blockPos, BlockLayersAccess.Fluid);
+        if (block.BlockId != waterBlockId && block.BlockId != iceBlockId)
+        {
+            return;
+        }
+
+        float temperature = getTemperature(blockPos);
+        if (temperature < config.FreezingTemperature)
+        {
+            bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
+        }
+        else if (temperature > config.MeltingTemperature)
+        {
+            bulkBlockAccessor.SetBlock(waterBlockId, blockPos, BlockLayersAccess.Fluid);
+        }
     }
 
     private float getTemperature(BlockPos blockPos)
