@@ -9,8 +9,8 @@ namespace WaterWeatherSimulationRedux;
 public class ModConfig
 {
 
-    public int FreezingTemperature { get; set; } = -4;
-    public int MeltingTemperature { get; set; } = 4;
+    public float FreezingTemperature { get; set; } = -4;
+    public float MeltingTemperature { get; set; } = 4;
 
     public string MeasurementType { get; set; } = "daily_average";
     public double AverageIntervalHours { get; set; } = 3;
