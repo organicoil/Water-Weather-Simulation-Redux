@@ -1,7 +1,7 @@
 {
   "type": "code",
   "side": "Server",
-  "modid": "WaterWeatherSimulationRedux",
+  "modid": "waterweathersimulationredux",
   "name": "Water Weather Simulation Redux",
   "authors": [
     "organicoil"
