@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Linq;
 using Vintagestory.API.Common;
+using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
 
@@ -15,6 +16,8 @@ public class ModConfig
     public string MeasurementType { get; set; } = "daily_average";
     public double AverageIntervalHours { get; set; } = 3;
     public double SpecificHour { get; set; } = 9;
+
+    public bool RespectSnowAccum { get; set; } = true;
 
 }
 
@@ -48,18 +51,26 @@ public class WaterWeatherSimulationRedux : ModSystem
     {
         try
         {
-            api.Logger.Debug("[WWSR] Starting initialization...");
-
             LOG = api.Logger;
+            LOG.Debug("[WWSR] Starting initialization...");
+
+            LoadConfig(api);
+            FixSnowAccum(api);
+
+            if (config.RespectSnowAccum && !GlobalConstants.MeltingFreezingEnabled)
+            {
+                LOG.Debug("[WWSR] Aborting initialization due to disabled snowAccum config");
+                return;
+            }
+
             world = api.World;
             bulkBlockAccessor = api.World.GetBlockAccessorMapChunkLoading(false);
 
             InitBlocks(api);
-            LoadConfig(api);
 
             api.Event.BeginChunkColumnLoadChunkThread += EventOnBeginChunkColumnLoadChunkThread;
 
-            api.Logger.Debug("[WWSR] Initialization complete");
+            LOG.Debug("[WWSR] Initialization complete");
         }
         catch (Exception e)
         {
@@ -104,6 +115,25 @@ public class WaterWeatherSimulationRedux : ModSystem
 
             LOG.Debug($"[WWSR] Default config file created ('{CONFIG_FILE_NAME}')");
         }
+    }
+
+    // The base game has a bug with "snowAccum" config being stored as a string instead of a boolean
+    // At the same time it is accessed as a boolean - which fails and default value (true) is always used
+    private void FixSnowAccum(ICoreServerAPI api)
+    {
+        if (api.World.Config.TryGetBool("snowAccum") != null)
+        {
+            // If bool value was previously set - it carries over when a save is restarted
+            LOG.Debug($"[WWSR] snowAccum is already saved as boolean '{api.World.Config.TryGetBool("snowAccum")}'");
+            return;
+        }
+
+        string snowAccumStr = api.World.Config.GetString("snowAccum");
+        bool snowAccum = snowAccumStr?.ToLower().Equals("true") ?? false; // This seems more in line with how bool configs are handled by the game then bool.TryParse
+
+        LOG.Debug($"[WWSR] Setting snowAccum config to '{snowAccum}' (as boolean)");
+        api.World.Config.SetBool("snowAccum", snowAccum);
+        GlobalConstants.MeltingFreezingEnabled = snowAccum;
     }
 
     //-------- Events --------
