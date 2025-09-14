@@ -306,11 +306,11 @@ public class WaterWeatherSimulationRedux : ModSystem
         }
 
         float temperature = getTemperature(blockPos);
-        if (temperature < config.FreezingTemperature)
+        if (block.BlockId == waterBlockId && temperature < config.FreezingTemperature)
         {
             bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
         }
-        else if (temperature > config.MeltingTemperature)
+        else if (block.BlockId == iceBlockId && temperature > config.MeltingTemperature)
         {
             bulkBlockAccessor.SetBlock(waterBlockId, blockPos, BlockLayersAccess.Fluid);
         }
