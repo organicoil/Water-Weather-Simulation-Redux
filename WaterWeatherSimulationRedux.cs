@@ -1,9 +1,11 @@
 ﻿using System;
 using System.Linq;
+using System.Reflection;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
 using Vintagestory.API.MathTools;
 using Vintagestory.API.Server;
+using Vintagestory.GameContent;
 
 namespace WaterWeatherSimulationRedux;
 
@@ -17,6 +19,7 @@ public class ModConfig
     public double AverageIntervalHours { get; set; } = 3;
     public double SpecificHour { get; set; } = 9;
 
+    public bool FixSnowAccum { get; set; } = true;
     public bool RespectSnowAccum { get; set; } = true;
 
 }
@@ -47,39 +50,31 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     public override bool ShouldLoad(EnumAppSide forSide) => forSide == EnumAppSide.Server;
 
-    public override void StartServerSide(ICoreServerAPI api)
+    public override void AssetsFinalize(ICoreAPI api)
     {
         try
         {
             LOG = api.Logger;
-            LOG.Debug("[WWSR] Starting initialization...");
-
-            LoadConfig(api);
-            FixSnowAccum(api);
-
-            if (config.RespectSnowAccum && !GlobalConstants.MeltingFreezingEnabled)
-            {
-                LOG.Debug("[WWSR] Aborting initialization due to disabled snowAccum config");
-                return;
-            }
+            LOG.Debug("[WWSR] Starting pre-initialization...");
 
             world = api.World;
             bulkBlockAccessor = api.World.GetBlockAccessorMapChunkLoading(false);
 
             InitBlocks(api);
 
-            api.Event.BeginChunkColumnLoadChunkThread += EventOnBeginChunkColumnLoadChunkThread;
+            LoadConfig(api);
+            FixSnowAccumConfig(api);
 
-            LOG.Debug("[WWSR] Initialization complete");
+            LOG.Debug("[WWSR] Pre-initialization complete");
         }
         catch (Exception e)
         {
-            api.Logger.Error("[WWSR] Failed to initialize");
+            api.Logger.Error("[WWSR] Failed to pre-initialize");
             api.Logger.Error(e);
         }
     }
 
-    private void InitBlocks(ICoreServerAPI api)
+    private void InitBlocks(ICoreAPI api)
     {
         Block iceBlock = api.World.GetBlock(AssetLocation.Create(ICE_BLOCK_PATH));
         Block waterBlock = api.World.GetBlock(AssetLocation.Create(WATER_BLOCK_PATH));
@@ -95,7 +90,7 @@ public class WaterWeatherSimulationRedux : ModSystem
         waterBlockId = waterBlock.BlockId;
     }
 
-    private void LoadConfig(ICoreServerAPI api)
+    private void LoadConfig(ICoreAPI api)
     {
         try
         {
@@ -119,21 +114,115 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     // The base game has a bug with "snowAccum" config being stored as a string instead of a boolean
     // At the same time it is accessed as a boolean - which fails and default value (true) is always used
-    private void FixSnowAccum(ICoreServerAPI api)
+    private void FixSnowAccumConfig(ICoreAPI api)
     {
-        if (api.World.Config.TryGetBool("snowAccum") != null)
+        if (!config.FixSnowAccum)
         {
-            // If bool value was previously set - it carries over when a save is restarted
-            LOG.Debug($"[WWSR] snowAccum is already saved as boolean '{api.World.Config.TryGetBool("snowAccum")}'");
+            LOG.Debug("[WWSR] Skipping snowAccum config fix (FixSnowAccum config is disabled)");
             return;
         }
 
-        string snowAccumStr = api.World.Config.GetString("snowAccum");
-        bool snowAccum = snowAccumStr?.ToLower().Equals("true") ?? false; // This seems more in line with how bool configs are handled by the game then bool.TryParse
+        LOG.Debug("[WWSR] Starting snowAccum fix...");
 
-        LOG.Debug($"[WWSR] Setting snowAccum config to '{snowAccum}' (as boolean)");
-        api.World.Config.SetBool("snowAccum", snowAccum);
+        bool? snowAccumConfig = api.World.Config.TryGetBool("snowAccum");
+        bool snowAccum;
+        if (snowAccumConfig == null)
+        {
+            string snowAccumStr = api.World.Config.GetString("snowAccum");
+            snowAccum = snowAccumStr?.ToLower().Equals("true") ?? false; // This seems more in line with how bool configs are handled by the game then bool.TryParse
+
+            LOG.Debug($"[WWSR] Setting snowAccum config to '{snowAccum}' (as boolean)");
+            api.World.Config.SetBool("snowAccum", snowAccum);
+        }
+        else
+        {
+            LOG.Debug($"[WWSR] snowAccum is already saved as boolean '{api.World.Config.TryGetBool("snowAccum")}'");
+            snowAccum = snowAccumConfig.Value;
+        }
+
         GlobalConstants.MeltingFreezingEnabled = snowAccum;
+
+        LOG.Debug("[WWSR] snowAccum config fix applied");
+    }
+
+    public override void StartServerSide(ICoreServerAPI api)
+    {
+        try
+        {
+            LOG.Debug("[WWSR] Starting initialization...");
+
+            RegisterCommands(api);
+
+            ConfigureWeatherSimulationSnowAccum(api);
+
+            if (config.RespectSnowAccum && !GlobalConstants.MeltingFreezingEnabled)
+            {
+                LOG.Debug("[WWSR] Skipping event subscriptions due to disabled snowAccum config");
+                return;
+            }
+
+            api.Event.BeginChunkColumnLoadChunkThread += EventOnBeginChunkColumnLoadChunkThread;
+
+            LOG.Debug("[WWSR] Initialization complete");
+        }
+        catch (Exception e)
+        {
+            api.Logger.Error("[WWSR] Failed to initialize");
+            api.Logger.Error(e);
+        }
+    }
+
+    private void RegisterCommands(ICoreServerAPI api)
+    {
+        api.ChatCommands
+           .Create("wwsrdebug")
+           .WithAlias("wwsrd")
+           .RequiresPrivilege(Privilege.controlserver)
+           .HandleWith(_ => TextCommandResult.Success(GetDebugInfo(api)));
+    }
+
+    private string GetDebugInfo(ICoreServerAPI api)
+    {
+        WeatherSimulationSnowAccum snowAccumSystem = GetWeatherSimulationSnowAccumInstance(api);
+        string message = $"snowAccumSystem.enabled = {snowAccumSystem.enabled}" +
+                         $"\nsnowAccumSystem.ProcessChunks = {snowAccumSystem.ProcessChunks}" +
+                         $"\nGlobalConstants.MeltingFreezingEnabled = {GlobalConstants.MeltingFreezingEnabled}" +
+                         $"\nsnowAccum = {api.World.Config.TryGetBool("snowAccum")})";
+        LOG.Debug($"[WWSR] message: {message.Replace("\n", " | ")}");
+        return message;
+    }
+
+    // WeatherSimulationSnowAccum.ProcessChunks is not affected by "snowAccum" config in the base game, even though it is used to add/remove snow during chunk updates
+    private void ConfigureWeatherSimulationSnowAccum(ICoreServerAPI api)
+    {
+        if (!config.FixSnowAccum)
+        {
+            LOG.Debug("[WWSR] Skipping snowAccumSystem configuration (FixSnowAccum config is disabled)");
+            return;
+        }
+
+        LOG.Debug("[WWSR] Starting configuring snowAccumSystem...");
+
+        WeatherSimulationSnowAccum snowAccumSystem = GetWeatherSimulationSnowAccumInstance(api);
+        if (snowAccumSystem != null)
+        {
+            snowAccumSystem.ProcessChunks = GlobalConstants.MeltingFreezingEnabled;
+
+            LOG.Debug("[WWSR] Finished configuring snowAccumSystem");
+        }
+        else
+        {
+            LOG.Error("[WWSR] Failed to configure snowAccumSystem (WeatherSimulationSnowAccum not found)");
+        }
+    }
+
+    // Using reflection as there doesn't seem to be a "proper" way to access WeatherSimulationSnowAccum instance
+    private WeatherSimulationSnowAccum GetWeatherSimulationSnowAccumInstance(ICoreAPI api)
+    {
+        WeatherSystemServer wss = api.ModLoader.GetModSystem<WeatherSystemServer>();
+        object snowAccumSystem = typeof(WeatherSystemServer).GetField("snowSimSnowAccu", BindingFlags.NonPublic | BindingFlags.Instance)
+                                                           ?.GetValue(wss);
+        return (WeatherSimulationSnowAccum) snowAccumSystem;
     }
 
     //-------- Events --------
