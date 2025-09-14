@@ -92,6 +92,8 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private void LoadConfig(ICoreAPI api)
     {
+        LOG.Debug($"[WWSR] Starting to load config ('{CONFIG_FILE_NAME}')...");
+
         try
         {
             config = api.LoadModConfig<ModConfig>(CONFIG_FILE_NAME);
@@ -103,13 +105,14 @@ public class WaterWeatherSimulationRedux : ModSystem
 
         if (config == null)
         {
-            LOG.Debug($"[WWSR] Config file not found or is invalid ('{CONFIG_FILE_NAME}'), creating a default config file...");
-
+            LOG.Debug($"[WWSR] Config file not found or is invalid ('{CONFIG_FILE_NAME}'), a default config will be used");
             config = new ModConfig();
-            api.StoreModConfig(config, CONFIG_FILE_NAME);
-
-            LOG.Debug($"[WWSR] Default config file created ('{CONFIG_FILE_NAME}')");
         }
+
+        // Always save to file so that newly added properties are added to the file
+        api.StoreModConfig(config, CONFIG_FILE_NAME);
+
+        LOG.Debug($"[WWSR] Config loaded and saved to file ('{CONFIG_FILE_NAME}')");
     }
 
     // The base game has a bug with "snowAccum" config being stored as a string instead of a boolean
@@ -122,7 +125,7 @@ public class WaterWeatherSimulationRedux : ModSystem
             return;
         }
 
-        LOG.Debug("[WWSR] Starting snowAccum fix...");
+        LOG.Debug("[WWSR] Starting snowAccum config fix...");
 
         bool? snowAccumConfig = api.World.Config.TryGetBool("snowAccum");
         bool snowAccum;
@@ -175,19 +178,29 @@ public class WaterWeatherSimulationRedux : ModSystem
     private void RegisterCommands(ICoreServerAPI api)
     {
         api.ChatCommands
+           .Create("wwsrconfig")
+           .WithAlias("wwsrc")
+           .RequiresPrivilege(Privilege.controlserver)
+           .HandleWith(_ => TextCommandResult.Success(GetConfigInfo()));
+
+        api.ChatCommands
            .Create("wwsrdebug")
            .WithAlias("wwsrd")
            .RequiresPrivilege(Privilege.controlserver)
            .HandleWith(_ => TextCommandResult.Success(GetDebugInfo(api)));
     }
 
+    private string GetConfigInfo()
+    {
+        string message = $"config.FreezingTemperature = {config.FreezingTemperature}" + $"\nconfig.MeltingTemperature = {config.MeltingTemperature}" + $"\nconfig.MeasurementType = {config.MeasurementType}" + $"\nconfig.AverageIntervalHours = {config.AverageIntervalHours}" + $"\nconfig.SpecificHour = {config.SpecificHour}" + $"\nconfig.FixSnowAccum = {config.FixSnowAccum}" + $"\nconfig.RespectSnowAccum = {config.RespectSnowAccum}";
+        LOG.Debug($"[WWSR] message: {message.Replace("\n", " | ")}");
+        return message;
+    }
+
     private string GetDebugInfo(ICoreServerAPI api)
     {
         WeatherSimulationSnowAccum snowAccumSystem = GetWeatherSimulationSnowAccumInstance(api);
-        string message = $"snowAccumSystem.enabled = {snowAccumSystem.enabled}" +
-                         $"\nsnowAccumSystem.ProcessChunks = {snowAccumSystem.ProcessChunks}" +
-                         $"\nGlobalConstants.MeltingFreezingEnabled = {GlobalConstants.MeltingFreezingEnabled}" +
-                         $"\nsnowAccum = {api.World.Config.TryGetBool("snowAccum")})";
+        string message = $"snowAccumSystem.enabled = {snowAccumSystem.enabled}" + $"\nsnowAccumSystem.ProcessChunks = {snowAccumSystem.ProcessChunks}" + $"\nGlobalConstants.MeltingFreezingEnabled = {GlobalConstants.MeltingFreezingEnabled}" + $"\nsnowAccum = {api.World.Config.TryGetBool("snowAccum")})";
         LOG.Debug($"[WWSR] message: {message.Replace("\n", " | ")}");
         return message;
     }
