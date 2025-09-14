@@ -17,7 +17,8 @@ public class ModConfig
 
     public string MeasurementType { get; set; } = "daily_average";
     public double AverageIntervalHours { get; set; } = 3;
-    public double SpecificHour { get; set; } = 9;
+    public double SpecificHourFreeze { get; set; } = 16;
+    public double SpecificHourMelt { get; set; } = 4;
 
     public bool FixSnowAccum { get; set; } = true;
     public bool RespectSnowAccum { get; set; } = true;
@@ -192,16 +193,26 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private string GetConfigInfo()
     {
-        string message = $"config.FreezingTemperature = {config.FreezingTemperature}" + $"\nconfig.MeltingTemperature = {config.MeltingTemperature}" + $"\nconfig.MeasurementType = {config.MeasurementType}" + $"\nconfig.AverageIntervalHours = {config.AverageIntervalHours}" + $"\nconfig.SpecificHour = {config.SpecificHour}" + $"\nconfig.FixSnowAccum = {config.FixSnowAccum}" + $"\nconfig.RespectSnowAccum = {config.RespectSnowAccum}";
-        LOG.Debug($"[WWSR] message: {message.Replace("\n", " | ")}");
+        string message = $"config.FreezingTemperature = {config.FreezingTemperature}"
+                         + $"\nconfig.MeltingTemperature = {config.MeltingTemperature}"
+                         + $"\nconfig.MeasurementType = {config.MeasurementType}"
+                         + $"\nconfig.AverageIntervalHours = {config.AverageIntervalHours}"
+                         + $"\nconfig.SpecificHourFreeze = {config.SpecificHourFreeze}"
+                         + $"\nconfig.SpecificHourMelt = {config.SpecificHourMelt}"
+                         + $"\nconfig.FixSnowAccum = {config.FixSnowAccum}"
+                         + $"\nconfig.RespectSnowAccum = {config.RespectSnowAccum}";
+        LOG.Debug($"[WWSR] GetConfigInfo: {message.Replace("\n", " | ")}");
         return message;
     }
 
     private string GetDebugInfo(ICoreServerAPI api)
     {
         WeatherSimulationSnowAccum snowAccumSystem = GetWeatherSimulationSnowAccumInstance(api);
-        string message = $"snowAccumSystem.enabled = {snowAccumSystem.enabled}" + $"\nsnowAccumSystem.ProcessChunks = {snowAccumSystem.ProcessChunks}" + $"\nGlobalConstants.MeltingFreezingEnabled = {GlobalConstants.MeltingFreezingEnabled}" + $"\nsnowAccum = {api.World.Config.TryGetBool("snowAccum")})";
-        LOG.Debug($"[WWSR] message: {message.Replace("\n", " | ")}");
+        string message = $"snowAccumSystem.enabled = {snowAccumSystem.enabled}"
+                         + $"\nsnowAccumSystem.ProcessChunks = {snowAccumSystem.ProcessChunks}"
+                         + $"\nGlobalConstants.MeltingFreezingEnabled = {GlobalConstants.MeltingFreezingEnabled}"
+                         + $"\nsnowAccum = {api.World.Config.TryGetBool("snowAccum")}";
+        LOG.Debug($"[WWSR] GetDebugInfo: {message.Replace("\n", " | ")}");
         return message;
     }
 
@@ -296,7 +307,7 @@ public class WaterWeatherSimulationRedux : ModSystem
             return;
         }
 
-        float temperature = getTemperature(blockPos);
+        float temperature = getTemperature(blockPos, block);
         if (temperature < config.FreezingTemperature)
         {
             bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
@@ -307,12 +318,12 @@ public class WaterWeatherSimulationRedux : ModSystem
         }
     }
 
-    private float getTemperature(BlockPos blockPos)
+    private float getTemperature(BlockPos blockPos, Block block)
     {
         return config.MeasurementType switch
                {
                    "now" => GetCurrentTemperature(blockPos),
-                   "specific_hour" => GetSpecificHourTemperature(blockPos),
+                   "specific_hour" => GetSpecificHourTemperature(blockPos, block),
                    _ => GetDailyAverageTemperature(blockPos)
                };
     }
@@ -322,10 +333,15 @@ public class WaterWeatherSimulationRedux : ModSystem
         return bulkBlockAccessor.GetClimateAt(blockPos, EnumGetClimateMode.ForSuppliedDate_TemperatureOnly, world.Calendar.TotalDays).Temperature;
     }
 
-    private float GetSpecificHourTemperature(BlockPos blockPos)
+    private float GetSpecificHourTemperature(BlockPos blockPos, Block block)
     {
-        int day = GetCurrentDay();
-        double time = GetTime(config.SpecificHour);
+        double hours = block.Id == waterBlockId ? config.SpecificHourFreeze : config.SpecificHourMelt;
+
+        int currentDay = GetCurrentDay();
+        int additionalDays = hours >= 0 ? (int) (hours / 24) : (int) ((hours - 24) / 24);
+        int day = currentDay + additionalDays;
+
+        double time = GetTime(hours);
 
         return GetSpecificHourTemperature(blockPos, day, time);
     }
@@ -364,7 +380,14 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private double GetTime(double hours)
     {
-        return Math.Min(hours, 23.9) / 24;
+        hours = hours switch
+                {
+                    > 24 => hours % 24,
+                    < 0 => 24 + (hours % 24),
+                    _ => hours
+                };
+
+        return hours / 24;
     }
 
 }
