@@ -24,7 +24,6 @@ public class ModConfig
 
 }
 
-//TODO: Add compatibility with `Config lib` (https://mods.vintagestory.at/configlib)
 //TODO: Add snow on top of ice (if sufficient rainfall)
 //TODO: (*) Add periodic updates outside of chunk load
 //TODO: (*) Handle waterlogged blocks

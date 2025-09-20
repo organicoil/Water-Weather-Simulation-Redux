@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "file": "water_weather_simulation_redux.json",
+  "formatting": [
+    {
+      "type": "separator",
+      "title": "Temperature",
+      "weight": 1.0
+    },
+    {
+      "type": "separator",
+      "title": "Measurement",
+      "weight": 2.0
+    },
+    {
+      "type": "separator",
+      "title": "'Snow and ice' (snowAccum) fix",
+      "weight": 3.0
+    }
+  ],
+  "settings": {
+    "float": {
+      "FREEZING_TEMPERATURE": {
+        "name": "FreezingTemperature",
+        "weight": 1.1,
+        "comment": "Water freezes if temperature is lower than this value",
+        "default": -4,
+        "range": {
+          "min": -100,
+          "max": 100,
+          "step": 0.1
+        }
+      },
+      "MELTING_TEMPERATURE": {
+        "name": "MeltingTemperature",
+        "weight": 1.2,
+        "comment": "Ice melts if temperature is higher than this value",
+        "default": 4,
+        "range": {
+          "min": -100,
+          "max": 100,
+          "step": 0.1
+        }
+      },
+      "AVERAGE_INTERVAL_HOURS": {
+        "name": "AverageIntervalHours",
+        "weight": 2.2,
+        "comment": "How much hours is between each two average temperature measurements, only used if MeasurementType is set to 'Daily average'",
+        "default": 3,
+        "range": {
+          "min": 0.5,
+          "max": 12,
+          "step": 0.5
+        }
+      },
+      "SPECIFIC_HOUR": {
+        "name": "SpecificHour",
+        "weight": 2.3,
+        "comment": "At which hour the temperature is measured, only used if MeasurementType is set to 'Specific hour'",
+        "default": 9,
+        "range": {
+          "min": 0,
+          "max": 23.9,
+          "step": 0.1
+        }
+      }
+    },
+    "string": {
+      "MEASUREMENT_TYPE": {
+        "name": "MeasurementType",
+        "weight": 2.1,
+        "comment": "Specifies how the temperature is measured",
+        "default": "Daily average",
+        "mapping": {
+          "Daily average": "daily_average",
+          "Specific hour": "specific_hour",
+          "Now": "now"
+        }
+      }
+    },
+    "boolean": {
+      "FIX_SNOW_ACCUM": {
+        "name": "FixSnowAccum",
+        "weight": 3.1,
+        "comment": "Whether the fix for 'Snow and ice' world option is applied",
+        "default": true
+      },
+      "RESPECT_SNOW_ACCUM": {
+        "name": "RespectSnowAccum",
+        "weight": 3.2,
+        "comment": "Whether the mod behaviour should be affected by 'Snow and ice' world option, meaning that disabling 'Snow and ice' will also disable ice melt/freeze done by this mod",
+        "default": true
+      }
+    }
+  }
+}
