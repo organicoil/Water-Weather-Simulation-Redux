@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Vintagestory.API.Common;
@@ -22,10 +23,14 @@ public class ModConfig
     public bool FixSnowAccum { get; set; } = true;
     public bool RespectSnowAccum { get; set; } = true;
 
+    public bool OnChunkLoad { get; set; } = true;
+    public bool PeriodicUpdates { get; set; } = true;
+    public int PeriodicUpdatesIntervalMillis { get; set; } = 60000; // 1 minute
+
 }
 
+//TODO: Cache temperature per chunk (to reduce load)
 //TODO: Add snow on top of ice (if sufficient rainfall)
-//TODO: (*) Add periodic updates outside of chunk load
 //TODO: (*) Handle waterlogged blocks
 public class WaterWeatherSimulationRedux : ModSystem
 {
@@ -35,10 +40,14 @@ public class WaterWeatherSimulationRedux : ModSystem
     private const string ICE_BLOCK_PATH = "lakeice";
     private const string WATER_BLOCK_PATH = "water-still-7";
 
+    private const int CHUNK_SIZE = 32;
+
     private ILogger LOG;
 
-    private IWorldAccessor world;
+    private IWorldAccessor worldAccessor;
+    private IWorldManagerAPI worldManager;
     private IBulkBlockAccessor bulkBlockAccessor;
+    private IBlockAccessor runtimeBlockAccessor;
 
     private ModConfig config;
 
@@ -53,11 +62,19 @@ public class WaterWeatherSimulationRedux : ModSystem
     {
         try
         {
+            if (api is not ICoreServerAPI sapi)
+            {
+                api.Logger.Error("[WWSR] Failed to pre-initialize (failed to cast api to ICoreServerAPI)");
+                return;
+            }
+
             LOG = api.Logger;
             LOG.Debug("[WWSR] Starting pre-initialization...");
 
-            world = api.World;
+            worldAccessor = api.World;
+            worldManager = sapi.WorldManager;
             bulkBlockAccessor = api.World.GetBlockAccessorMapChunkLoading(false);
+            runtimeBlockAccessor = api.World.BlockAccessor;
 
             InitBlocks(api);
 
@@ -163,7 +180,16 @@ public class WaterWeatherSimulationRedux : ModSystem
                 return;
             }
 
-            api.Event.BeginChunkColumnLoadChunkThread += EventOnBeginChunkColumnLoadChunkThread;
+            if (config.OnChunkLoad)
+            {
+                LOG.Debug("[WWSR] Registering OnChunkLoad event...");
+                api.Event.BeginChunkColumnLoadChunkThread += OnChunkColumnLoad;
+            }
+            if (config.PeriodicUpdates)
+            {
+                LOG.Debug("[WWSR] Registering PeriodicUpdates event...");
+                api.Event.RegisterGameTickListener(ProcessExistingChunks, config.PeriodicUpdatesIntervalMillis, config.PeriodicUpdatesIntervalMillis);
+            }
 
             LOG.Debug("[WWSR] Initialization complete");
         }
@@ -248,13 +274,13 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     //-------- Events --------
 
-    private void EventOnBeginChunkColumnLoadChunkThread(IServerMapChunk mapChunk, int chunkX, int chunkZ, IWorldChunk[] chunks)
+    private void OnChunkColumnLoad(IServerMapChunk mapChunk, int chunkX, int chunkZ, IWorldChunk[] chunks)
     {
         try
         {
             bulkBlockAccessor.SetChunks(new Vec2i(chunkX, chunkZ), chunks);
 
-            ProcessChunkBlocks(chunkX, chunkZ);
+            ProcessChunkBlocks(chunkX * CHUNK_SIZE, chunkZ * CHUNK_SIZE, bulkBlockAccessor);
 
             bulkBlockAccessor.Commit();
         }
@@ -265,17 +291,38 @@ public class WaterWeatherSimulationRedux : ModSystem
         }
     }
 
-    private void ProcessChunkBlocks(int chunkX, int chunkZ)
+    private void ProcessExistingChunks(float dt)
+    {
+        try
+        {
+            foreach (KeyValuePair<long, IMapChunk> loadedChunkCopy in worldManager.AllLoadedMapchunks)
+            {
+                long index2d = loadedChunkCopy.Key;
+                Vec2i chunkPos = worldManager.MapChunkPosFromChunkIndex2D(index2d);
+
+                //TODO: (?) Queue only and then update random parts separately
+                //TODO: (?) If no updates are made during iteration - skip next several iterations (to avoid unnecessary actions)
+                ProcessChunkBlocks(chunkPos.X * CHUNK_SIZE, chunkPos.Y * CHUNK_SIZE, runtimeBlockAccessor);
+            }
+        }
+        catch (Exception e)
+        {
+            LOG.Error("[WWSR] Failed to process existing chunks");
+            LOG.Error(e);
+        }
+    }
+
+    private void ProcessChunkBlocks(int chunkX, int chunkZ, IBlockAccessor blockAccessor)
     {
         BlockPos blockPos = new BlockPos(0, 0, 0, 0);
-        for (int x = chunkX * 32; x < chunkX * 32 + 32; x++)
+        for (int x = chunkX; x < chunkX + CHUNK_SIZE; x++)
         {
-            for (int z = chunkZ * 32; z < chunkZ * 32 + 32; z++)
+            for (int z = chunkZ; z < chunkZ + CHUNK_SIZE; z++)
             {
                 try
                 {
-                    UpdateBlockPos(blockPos, x, z);
-                    ProcessBlock(blockPos);
+                    UpdateBlockPos(blockPos, x, z, blockAccessor);
+                    ProcessBlock(blockPos, blockAccessor);
                 }
                 catch (Exception e)
                 {
@@ -286,19 +333,19 @@ public class WaterWeatherSimulationRedux : ModSystem
         }
     }
 
-    private void UpdateBlockPos(BlockPos blockPos, int x, int z)
+    private void UpdateBlockPos(BlockPos blockPos, int x, int z, IBlockAccessor blockAccessor)
     {
         blockPos.X = x;
         blockPos.Z = z;
 
         // Rain map height may return value out of world.
-        int y = bulkBlockAccessor.GetRainMapHeightAt(blockPos);
-        blockPos.Y = y < bulkBlockAccessor.MapSizeY ? y : world.SeaLevel - 1;
+        int y = blockAccessor.GetRainMapHeightAt(blockPos);
+        blockPos.Y = y < blockAccessor.MapSizeY ? y : worldAccessor.SeaLevel - 1;
     }
 
-    private void ProcessBlock(BlockPos blockPos)
+    private void ProcessBlock(BlockPos blockPos, IBlockAccessor blockAccessor)
     {
-        Block block = bulkBlockAccessor.GetBlock(blockPos, BlockLayersAccess.Fluid);
+        Block block = blockAccessor.GetBlock(blockPos, BlockLayersAccess.Fluid);
         if (block.BlockId != waterBlockId && block.BlockId != iceBlockId)
         {
             return;
@@ -307,11 +354,11 @@ public class WaterWeatherSimulationRedux : ModSystem
         float temperature = getTemperature(blockPos);
         if (block.BlockId == waterBlockId && temperature < config.FreezingTemperature)
         {
-            bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
+            blockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
         }
         else if (block.BlockId == iceBlockId && temperature > config.MeltingTemperature)
         {
-            bulkBlockAccessor.SetBlock(waterBlockId, blockPos, BlockLayersAccess.Fluid);
+            blockAccessor.SetBlock(waterBlockId, blockPos, BlockLayersAccess.Fluid);
         }
     }
 
@@ -327,7 +374,7 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private float GetCurrentTemperature(BlockPos blockPos)
     {
-        return bulkBlockAccessor.GetClimateAt(blockPos, EnumGetClimateMode.ForSuppliedDate_TemperatureOnly, world.Calendar.TotalDays).Temperature;
+        return bulkBlockAccessor.GetClimateAt(blockPos, EnumGetClimateMode.ForSuppliedDate_TemperatureOnly, worldAccessor.Calendar.TotalDays).Temperature;
     }
 
     private float GetSpecificHourTemperature(BlockPos blockPos)
@@ -367,7 +414,7 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private int GetCurrentDay()
     {
-        return (int) world.Calendar.TotalDays;
+        return (int) worldAccessor.Calendar.TotalDays;
     }
 
     private double GetTime(double hours)
