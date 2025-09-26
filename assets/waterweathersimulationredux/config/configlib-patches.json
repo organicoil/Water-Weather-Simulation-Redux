@@ -16,6 +16,11 @@
       "type": "separator",
       "title": "'Snow and ice' (snowAccum) fix",
       "weight": 3.0
+    },
+    {
+      "type": "separator",
+      "title": "Miscellaneous",
+      "weight": 4.0
     }
   ],
   "settings": {
@@ -90,6 +95,12 @@
         "weight": 3.2,
         "comment": "Whether the mod behaviour should be affected by 'Snow and ice' world option, meaning that disabling 'Snow and ice' will also disable ice melt/freeze done by this mod",
         "default": true
+      },
+      "FreezeFlowingSourceBlocks": {
+        "name": "FreezeFlowingSourceBlocks",
+        "weight": 4.1,
+        "comment": "Whether the flowing water-source blocks should get frozen (base game does not freeze any flowing blocks)",
+        "default": false
       }
     }
   }

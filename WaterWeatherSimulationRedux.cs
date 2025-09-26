@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using Vintagestory.API.Common;
@@ -22,6 +23,8 @@ public class ModConfig
     public bool FixSnowAccum { get; set; } = true;
     public bool RespectSnowAccum { get; set; } = true;
 
+    public bool FreezeFlowingSourceBlocks { get; set; } = false;
+
 }
 
 //TODO: Add snow on top of ice (if sufficient rainfall)
@@ -33,7 +36,17 @@ public class WaterWeatherSimulationRedux : ModSystem
     private const string CONFIG_FILE_NAME = "water_weather_simulation_redux.json";
 
     private const string ICE_BLOCK_PATH = "lakeice";
-    private const string WATER_BLOCK_PATH = "water-still-7";
+    private const string STILL_SOURCE_WATER_BLOCK_PATH = "water-still-7";
+
+    private const string FLOWING_SOURCE_WATER_N_BLOCK_PATH = "water-n-7";
+    private const string FLOWING_SOURCE_WATER_NE_BLOCK_PATH = "water-ne-7";
+    private const string FLOWING_SOURCE_WATER_E_BLOCK_PATH = "water-e-7";
+    private const string FLOWING_SOURCE_WATER_SE_BLOCK_PATH = "water-se-7";
+    private const string FLOWING_SOURCE_WATER_S_BLOCK_PATH = "water-s-7";
+    private const string FLOWING_SOURCE_WATER_SW_BLOCK_PATH = "water-sw-7";
+    private const string FLOWING_SOURCE_WATER_W_BLOCK_PATH = "water-w-7";
+    private const string FLOWING_SOURCE_WATER_NW_BLOCK_PATH = "water-nw-7";
+    private const string FLOWING_SOURCE_WATER_D_BLOCK_PATH = "water-d-7";
 
     private ILogger LOG;
 
@@ -43,7 +56,8 @@ public class WaterWeatherSimulationRedux : ModSystem
     private ModConfig config;
 
     private int iceBlockId;
-    private int waterBlockId;
+    private int stillWaterBlockId;
+    private HashSet<int> flowingSourceWaterBlockIds;
 
     //-------- Config/Initialization --------
 
@@ -59,9 +73,8 @@ public class WaterWeatherSimulationRedux : ModSystem
             world = api.World;
             bulkBlockAccessor = api.World.GetBlockAccessorMapChunkLoading(false);
 
-            InitBlocks(api);
-
             LoadConfig(api);
+            InitBlocks(api);
             FixSnowAccumConfig(api);
 
             LOG.Debug("[WWSR] Pre-initialization complete");
@@ -75,18 +88,33 @@ public class WaterWeatherSimulationRedux : ModSystem
 
     private void InitBlocks(ICoreAPI api)
     {
-        Block iceBlock = api.World.GetBlock(AssetLocation.Create(ICE_BLOCK_PATH));
-        Block waterBlock = api.World.GetBlock(AssetLocation.Create(WATER_BLOCK_PATH));
-        if (iceBlock == null)
-        {
-            throw new Exception($"[WWSR] Ice block not found ('{ICE_BLOCK_PATH}')");
-        }
-        if (waterBlock == null)
-        {
-            throw new Exception($"[WWSR] Water block not found ('{WATER_BLOCK_PATH}')");
-        }
+        Block iceBlock = getMandatoryBlock(api, ICE_BLOCK_PATH);
+        Block stillWaterBlock = getMandatoryBlock(api, STILL_SOURCE_WATER_BLOCK_PATH);
+
         iceBlockId = iceBlock.BlockId;
-        waterBlockId = waterBlock.BlockId;
+        stillWaterBlockId = stillWaterBlock.BlockId;
+
+        if (config.FreezeFlowingSourceBlocks)
+        {
+            flowingSourceWaterBlockIds =
+            [
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_N_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_NE_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_E_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_SE_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_S_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_SW_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_W_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_NW_BLOCK_PATH).BlockId,
+                getMandatoryBlock(api, FLOWING_SOURCE_WATER_D_BLOCK_PATH).BlockId
+            ];
+        }
+    }
+
+    private Block getMandatoryBlock(ICoreAPI api, string domainAndPath)
+    {
+        Block block = api.World.GetBlock(AssetLocation.Create(domainAndPath));
+        return block ?? throw new Exception($"[WWSR] Block not found: '{domainAndPath}'");
     }
 
     private void LoadConfig(ICoreAPI api)
@@ -299,19 +327,34 @@ public class WaterWeatherSimulationRedux : ModSystem
     private void ProcessBlock(BlockPos blockPos)
     {
         Block block = bulkBlockAccessor.GetBlock(blockPos, BlockLayersAccess.Fluid);
-        if (block.BlockId != waterBlockId && block.BlockId != iceBlockId)
-        {
-            return;
-        }
 
-        float temperature = getTemperature(blockPos);
-        if (block.BlockId == waterBlockId && temperature < config.FreezingTemperature)
+        if (block.BlockId == stillWaterBlockId)
         {
-            bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
+            float temperature = getTemperature(blockPos);
+            if (temperature < config.FreezingTemperature)
+            {
+                bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
+                bulkBlockAccessor.MarkBlockModified(blockPos);
+            }
         }
-        else if (block.BlockId == iceBlockId && temperature > config.MeltingTemperature)
+        else if (block.BlockId == iceBlockId)
         {
-            bulkBlockAccessor.SetBlock(waterBlockId, blockPos, BlockLayersAccess.Fluid);
+            float temperature = getTemperature(blockPos);
+            if (temperature > config.MeltingTemperature)
+            {
+                bulkBlockAccessor.SetBlock(stillWaterBlockId, blockPos, BlockLayersAccess.Fluid);
+                bulkBlockAccessor.MarkBlockModified(blockPos);
+                //TODO: Need to force created water into flowing state if empty neighbouring blocks
+            }
+        }
+        else if (flowingSourceWaterBlockIds != null && flowingSourceWaterBlockIds.Contains(block.BlockId))
+        {
+            float temperature = getTemperature(blockPos);
+            if (temperature < config.FreezingTemperature)
+            {
+                bulkBlockAccessor.SetBlock(iceBlockId, blockPos, BlockLayersAccess.Fluid);
+                bulkBlockAccessor.MarkBlockModified(blockPos);
+            }
         }
     }
 
